@@ -23,8 +23,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut channel = sess.channel_session()?;
     channel.exec("whoami")?; // Example command
 
+    let mut output = String::new();
+    channel.read_to_string(&mut output)?;
+    println!("Output: {}", output);
 
+    channel.send_eof()?;
+    channel.wait_eof()?;
+    channel.close()?;
     channel.wait_close()?;
+
+
     println!("Channel exit status: {}", channel.exit_status()?);
 
     Ok(())
