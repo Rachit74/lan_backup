@@ -2,9 +2,9 @@ use ssh2::Session;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use walkdir::WalkDir;
-use::std::env;
+use std::env;
 use dotenv::dotenv;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,14 +25,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ssh session
     let mut session = Session::new()?;
-
     session.set_tcp_stream(tcp);
-    session.handshake();
+    session.handshake()?;
 
     session.userauth_password(username, &password)?;
+    assert!(session.authenticated());
 
+    let sftp = session.sftp()?;
+
+    for entry in WalkDir::new(local_root) {
+        let entry = entry?;
+        let path = entry.path();
+
+        let relative = path.strip_prefix(local_root)?;
+        let remote_path = remote_root.join(relative);
+
+        if path.is_dir() {
+            let _ = sftp.mkdir(&remote_path, 0o755);
+        } else if path.is_file() {
+            println!("Uploading: {:?}", relative);
+
+            let mut local_file = File::open(path)?;
+            let mut remote_file = sftp.create(&remote_path)?;
+
+            // create a buffer to send data
+            let mut buffer = [0u8; 8192];
+            loop {
+                let n = local_file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                remote_file.write_all(&buffer[..n])?;
+            }
+        }
+    }
+
+    println!("Transfer complete.");
     Ok(())
-
-
-
 }
