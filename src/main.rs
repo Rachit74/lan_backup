@@ -43,12 +43,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if path.is_dir() {
             let _ = sftp.mkdir(&remote_path, 0o755);
         } else if path.is_file() {
+
+            let local_size = path.metadata()?.len();
+
+            // Try to stat remote file
+            if let Ok(remote_meta) = sftp.stat(&remote_path) {
+                if remote_meta.size == Some(local_size) {
+                    println!("Skipping (unchanged): {:?}", relative);
+                    continue;
+                }
+            }
+
             println!("Uploading: {:?}", relative);
 
             let mut local_file = File::open(path)?;
             let mut remote_file = sftp.create(&remote_path)?;
 
-            // create a buffer to send data
             let mut buffer = [0u8; 8192];
             loop {
                 let n = local_file.read(&mut buffer)?;
@@ -59,6 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
 
     println!("Transfer complete.");
     Ok(())
