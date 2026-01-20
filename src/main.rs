@@ -6,14 +6,61 @@ use std::path::Path;
 use walkdir::WalkDir;
 use std::env;
 use dotenv::dotenv;
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+
+
+#[derive(Serialize, Deserialize)]
+struct FileRecord {
+    hash: String,
+    size: u64,
+}
+
+type Index = HashMap<String, FileRecord>;
+
+// use buffer to read file in chunks and hash rather than reading whole file into memory
+fn hash_file(path: &Path) -> Result<String, std::io::Error> {
+    let mut file = File::open(path)?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+
+    Ok(hasher.finalize().to_hex().to_string())
+
+}
+
+fn load_index(path: &Path) -> Index {
+    if let Ok(data) = std::fs::read_to_string(path) {
+        serde_json::from_str(&data).unwrap_or_default()
+    } else {
+        HashMap::new()
+    }
+}
+
+fn save_index(path: &Path, index: &Index) -> std::io::Result<()> {
+    let data = serde_json::to_string_pretty(index).unwrap();
+    std::fs::write(path, data)
+}
+
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    let index_path = Path::new("backup_index.json");
+    let mut index = load_index(index_path);
+
 
     // load env
     dotenv().ok();
 
     // configs
-    let local_root = Path::new("/home/rachit/tool_test/src_dir");
+    let local_root = Path::new("/home/rachit/dev/projects/project-inventory");
     let remote_root = Path::new("/home/rachit/tool_test/des_dir");
 
     let host = "192.168.1.11:22";
@@ -45,14 +92,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else if path.is_file() {
 
             let local_size = path.metadata()?.len();
+            let relative_str = relative.to_string_lossy().to_string();
 
-            // Try to stat remote file
-            if let Ok(remote_meta) = sftp.stat(&remote_path) {
-                if remote_meta.size == Some(local_size) {
+            // Compute hash
+            let local_hash = hash_file(path)?;
+
+            // Check index
+            if let Some(record) = index.get(&relative_str) {
+                if record.hash == local_hash {
                     println!("Skipping (unchanged): {:?}", relative);
                     continue;
                 }
             }
+            // Update index
+            index.insert(relative_str,FileRecord {hash: local_hash, size: local_size,},);
 
             println!("Uploading: {:?}", relative);
 
@@ -70,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-
+    save_index(index_path, &index)?;
     println!("Transfer complete.");
     Ok(())
 }
